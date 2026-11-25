@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "omnipost",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/index.js", "--dev"],
+      "port": 5170
+    }
+  ]
+}
