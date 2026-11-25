@@ -1,3 +1,4 @@
+import './lib/env.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -5,7 +6,8 @@ import { Readable } from 'node:stream';
 import express from 'express';
 import multer from 'multer';
 import { db } from './lib/db.js';
-import { DATA_DIR, DEBUG_DIR, MEDIA_DIR, THUMB_DIR, WEB_DIST } from './lib/paths.js';
+import { DATA_DIR, DEBUG_DIR, MEDIA_DIR, ROOT, THUMB_DIR, WEB_DIST } from './lib/paths.js';
+import { importCookies, PLATFORMS_FOR } from './lib/bridge.js';
 import { bus, emit, createTask, updateTask, getTask, listTasks } from './lib/events.js';
 import { inspect, download, ytdlpVersion, updateYtDlp, autoUpdateYtDlp, ytdlp, FFMPEG } from './lib/tools.js';
 import { addMedia, ensureCompatible, findMedia, makeVertical, removeMedia } from './lib/media.js';
@@ -40,6 +42,7 @@ app.get('/api/me', (req, res) => res.json({
   hasOwner: !!db.data.owner,
   googleClientId: process.env.GOOGLE_CLIENT_ID || null,
   browserFound: !!findBrowser(),
+  extensionDir: path.join(ROOT, 'extension'),
 }));
 
 const flows = new Map();
@@ -79,6 +82,25 @@ app.post('/api/auth/google/idtoken', wrap(async (req, res) => {
   res.json({ user: db.data.owner });
 }));
 
+// Sign in with the Google account that is already signed in to the user's everyday browser
+// (cookies handed over by the OmniPost Connector extension).
+app.post('/api/auth/extension', wrap(async (req, res) => {
+  const { groups, restore } = await importCookies(req.body?.cookies, ['google']);
+  if (!groups.length) throw new Error('You are not signed in to Google in this browser. Sign in at google.com first, or use the OmniPost window.');
+  let profile;
+  try {
+    profile = await runLoginFlow(google, { interactive: false });
+  } catch (e) {
+    await restore();
+    throw new Error(`Could not use the Google login from this browser: ${e.message}`);
+  }
+  const err = acceptGoogleUser(profile);
+  if (err) { await restore(); return res.status(403).json({ error: err }); }
+  issueSession(res);
+  connectPlatform('youtube', { silent: true, interactive: false });
+  res.json({ user: db.data.owner });
+}));
+
 app.post('/api/auth/logout', (req, res) => { endSession(req, res); res.json({ ok: true }); });
 
 // ------------------------------------------------------------------ everything below needs a session
@@ -111,6 +133,19 @@ app.get('/api/events', (req, res) => {
 app.post('/api/accounts/:pid/connect', wrap(async (req, res) => {
   if (!platforms[req.params.pid]) throw new Error('Unknown platform');
   res.json({ taskId: connectPlatform(req.params.pid).id });
+}));
+
+// Connect accounts using the logins from the user's everyday browser (OmniPost Connector extension).
+app.post('/api/accounts/import', wrap(async (req, res) => {
+  const wanted = Array.isArray(req.body?.platforms) ? req.body.platforms.filter((p) => platforms[p]) : Object.keys(platforms);
+  const groups = Object.keys(PLATFORMS_FOR).filter((g) => PLATFORMS_FOR[g].some((p) => wanted.includes(p)));
+  const { groups: got, restore } = await importCookies(req.body?.cookies, groups);
+  const tasks = {};
+  // If a copied login doesn't work, put back whatever session the OmniPost browser had before.
+  for (const g of got) {
+    for (const pid of PLATFORMS_FOR[g]) if (wanted.includes(pid)) tasks[pid] = connectPlatform(pid, { interactive: false, onError: () => restore([g]) }).id;
+  }
+  res.json({ tasks, missing: wanted.filter((p) => !tasks[p]) });
 }));
 
 app.delete('/api/accounts/:pid', wrap(async (req, res) => {

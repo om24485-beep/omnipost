@@ -15,7 +15,7 @@
     "cli": "node cli/omnipost.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.0",

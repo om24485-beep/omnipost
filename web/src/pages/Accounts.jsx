@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ExternalLink, Globe, LogOut, RefreshCw, ShieldCheck, Terminal, Wrench } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, ExternalLink, Globe, LogOut, Puzzle, RefreshCw, ShieldCheck, Terminal, Wrench } from 'lucide-react';
 import { api } from '../api.js';
+import { GROUP_OF, browserCookies, useExtension } from '../extension.js';
 import { useStore } from '../store.jsx';
 import { Avatar, Button, Card, PLATFORM, PlatformBadge, Spinner, Toggle, cx, timeAgo, useToast } from '../ui.jsx';
 
@@ -10,7 +11,7 @@ const BLURB = {
   tiktok: 'Every TikTok on your profile. Posts through TikTok Studio.',
 };
 
-function PlatformCard({ p }) {
+function PlatformCard({ p, ext }) {
   const { accounts, tasks, feeds, syncing, syncFeed } = useStore();
   const toast = useToast();
   const acc = accounts[p.id];
@@ -26,6 +27,15 @@ function PlatformCard({ p }) {
 
   async function connect() {
     try {
+      // With the Connector extension, reuse the login already in this browser; otherwise open the OmniPost window.
+      if (ext) {
+        const cookies = await browserCookies([GROUP_OF[p.id]]).catch(() => null);
+        if (cookies) {
+          const r = await api('/api/accounts/import', { method: 'POST', body: { platforms: [p.id], cookies } });
+          if (r.tasks[p.id]) return setTaskId(r.tasks[p.id]);
+          toast(`You're not signed in to ${p.name} in this browser, so sign in in the window that opens.`, 'info', 6000);
+        }
+      }
       const { taskId: id } = await api(`/api/accounts/${p.id}/connect`, { method: 'POST' });
       setTaskId(id);
     } catch (e) {
@@ -70,7 +80,7 @@ function PlatformCard({ p }) {
       {waiting && (
         <div className="pop relative mt-4 rounded-xl border border-sky-400/20 bg-sky-400/[0.06] p-3 text-sm text-sky-100">
           <div className="flex items-center gap-2"><Spinner />{task.message}</div>
-          <div className="mt-1 text-xs text-sky-200/60">Sign in like you normally would (2FA works). OmniPost never sees your password.</div>
+          {/^Sign in/.test(task.message || '') && <div className="mt-1 text-xs text-sky-200/60">Sign in like you normally would (2FA works). OmniPost never sees your password.</div>}
           <Button size="xs" variant="ghost" className="mt-2 -ml-2" onClick={() => api(`/api/tasks/${task.id}/cancel`, { method: 'POST' })}>Cancel</Button>
         </div>
       )}
@@ -91,7 +101,64 @@ function PlatformCard({ p }) {
   );
 }
 
+function ConnectorCard({ ext }) {
+  const { platforms, tasks } = useStore();
+  const toast = useToast();
+  const [dir, setDir] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api('/api/me').then((m) => setDir(m.extensionDir)).catch(() => {}); }, []);
+
+  async function importAll() {
+    setBusy(true);
+    try {
+      const cookies = await browserCookies(['google', 'instagram', 'tiktok']);
+      const r = await api('/api/accounts/import', { method: 'POST', body: { cookies } });
+      const names = (ids) => ids.map((id) => platforms.find((p) => p.id === id)?.name || id).join(', ');
+      const started = Object.keys(r.tasks);
+      if (started.length) toast(`Connecting ${names(started)} with this browser's logins…`);
+      if (r.missing.length) toast(`Not signed in here: ${names(r.missing)}. Sign in to them in this browser, or use Connect.`, 'info', 7000);
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (ext === undefined) return null;
+  const importing = Object.values(tasks).some((t) => t.kind === 'connect' && t.status === 'waiting');
+  return (
+    <Card className="mb-6 flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+      <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-fuchsia-500/20 to-orange-400/20 text-rose-300"><Puzzle className="size-5" /></span>
+      {ext ? (
+        <>
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">Use the logins from this browser</div>
+            <div className="mt-0.5 text-sm text-zinc-400">The OmniPost Connector is installed. Connect every platform you're already signed in to here, in one click.</div>
+          </div>
+          <Button variant="brand" size="sm" loading={busy || importing} onClick={importAll}>Import my logins</Button>
+        </>
+      ) : (
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold">Skip signing in again: add the OmniPost Connector</div>
+          <ol className="mt-1.5 list-decimal space-y-1 pl-5 text-sm text-zinc-400">
+            <li>In this browser, open <code className="text-zinc-300">chrome://extensions</code> (Edge: <code className="text-zinc-300">edge://extensions</code>) and turn on <b className="text-zinc-300">Developer mode</b>.</li>
+            <li>Click <b className="text-zinc-300">Load unpacked</b> and pick this folder:
+              {dir && (
+                <button onClick={() => navigator.clipboard.writeText(dir).then(() => toast('Folder path copied'))} className="ml-1.5 inline-flex max-w-full cursor-pointer items-center gap-1.5 rounded-md bg-black/40 px-2 py-0.5 font-mono text-xs text-zinc-300 hover:bg-black/60" title="Copy path">
+                  <span className="truncate">{dir}</span><Copy className="size-3 shrink-0" />
+                </button>
+              )}
+            </li>
+            <li>Come back to this tab. The button to import your logins appears here.</li>
+          </ol>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function Accounts() {
+  const ext = useExtension();
   const { platforms, settings, updateSettings } = useStore();
   const toast = useToast();
   const [sys, setSys] = useState(null);
@@ -102,11 +169,13 @@ export default function Accounts() {
     <div className="mx-auto max-w-5xl">
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Accounts</h1>
-        <p className="mt-1 text-sm text-zinc-400">Connect once. OmniPost opens the real site in its own browser window — you sign in there, no API keys or passwords stored here.</p>
+        <p className="mt-1 text-sm text-zinc-400">Connect once. OmniPost uses your logins from this browser (with the Connector) or opens the real site in its own window. No API keys, and your passwords are never stored.</p>
       </div>
 
+      <ConnectorCard ext={ext} />
+
       <div className="grid gap-4 md:grid-cols-3">
-        {platforms.map((p) => <PlatformCard key={p.id} p={p} />)}
+        {platforms.map((p) => <PlatformCard key={p.id} p={p} ext={ext} />)}
       </div>
 
       <div className="mt-10 grid gap-4 lg:grid-cols-2">

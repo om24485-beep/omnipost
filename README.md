@@ -2,7 +2,7 @@
 
 **Every video. Every platform. One place.** A free, keyless, local-first hub for creators:
 
-- **Sign in with Google**: no OAuth app or client secret needed.
+- **Sign in with Google**, using the account already signed in to your browser (via the free Connector extension or Google's own popup). No client secret needed.
 - **Connect YouTube, Instagram and TikTok**: you sign in on the real sites, and OmniPost never sees or stores your password.
 - **One unified feed** of all your videos, Shorts, Reels and TikToks, with views, likes, search, sorting and an inline player.
 - **Post once, publish everywhere.** Pick a video, choose the platforms, optionally customize the caption per platform, add hashtags, then publish now or schedule it.
@@ -16,7 +16,7 @@ It costs **$0 to run and $0 to post**. There are no API keys, no paid APIs and n
 
 ## Quick start
 
-Requirements: **Node.js 20+** and **Google Chrome, Microsoft Edge or Brave**.
+Requirements: **Node.js 20.12+** and **Google Chrome, Microsoft Edge or Brave**.
 
 ```bash
 git clone https://github.com/om24485-beep/omnipost.git
@@ -25,9 +25,31 @@ npm install        # also builds the web UI
 npm start          # opens http://localhost:5170
 ```
 
-1. Click **Continue with Google**. A normal Chrome or Edge window opens, and you sign in there.
-2. YouTube connects automatically from the same Google session. Connect Instagram and TikTok on **Accounts**.
-3. Your feed fills in. Go to **Create**, drop a video, tick the platforms, and **Publish**.
+1. *(Recommended)* Install the **OmniPost Connector** extension so you never sign in twice (see below).
+2. Click **Continue with Google**. With the Connector, OmniPost uses the Google account already signed in to your browser. Without it, a separate Chrome or Edge window opens and you sign in there.
+3. YouTube connects automatically from the same Google session. On **Accounts**, click **Import my logins** (Connector) or **Connect** for Instagram and TikTok.
+4. Your feed fills in. Go to **Create**, drop a video, tick the platforms, and **Publish**.
+
+### OmniPost Connector extension (one-time, about 30 seconds)
+
+OmniPost posts through its own browser profile, so by default you'd sign in to each site a second time there. The Connector copies the logins you already have in your everyday Chrome / Edge / Brave into OmniPost instead.
+
+1. Open `chrome://extensions` (Edge: `edge://extensions`) and turn on **Developer mode**.
+2. Click **Load unpacked** and choose the `extension` folder inside this project.
+3. Reload OmniPost. The sign-in button now says **Continue as the Google account in this browser**.
+
+It only reads cookies for google.com, youtube.com, instagram.com and tiktok.com, and only hands them to the OmniPost page on `localhost`. Nothing is sent anywhere else. If a copied Google login stops working after a while (Chrome can bind Google sessions to the original browser), click **Connect** on YouTube and sign in once in the OmniPost window.
+
+### Official Google popup (optional, free Client ID)
+
+To get Google's own "Sign in with Google" popup, pre-filled with your browser's account:
+
+1. Go to [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials) → **Create credentials** → **OAuth client ID**. If asked, configure the consent screen first (External, app name "OmniPost", your email).
+2. Application type **Web application**. Under **Authorized JavaScript origins** add both `http://localhost` and `http://localhost:5170`.
+3. Copy the Client ID (it ends in `.apps.googleusercontent.com`).
+4. Copy `.env.example` to `.env` in the project folder, paste it after `GOOGLE_CLIENT_ID=`, and restart `npm start`.
+
+No client secret and no billing are needed. This popup signs you in to OmniPost only. YouTube posting still uses the Connector or a one-time sign-in in the OmniPost window.
 
 On first run OmniPost downloads the official **yt-dlp** binary from GitHub and checks it against the published SHA-256 sums. ffmpeg comes bundled through `ffmpeg-static`.
 
@@ -35,7 +57,7 @@ On first run OmniPost downloads the official **yt-dlp** binary from GitHub and c
 
 | Piece | What it uses |
 | --- | --- |
-| Google sign-in | You sign in inside a dedicated browser profile, and OmniPost reads your name and email from your own Google Account page. Optionally, set `GOOGLE_CLIENT_ID` to also show the official Google button. A client ID is free and needs no secret. |
+| Google sign-in | The Connector extension copies your browser's Google login into OmniPost's profile, or you sign in once inside that profile. OmniPost then reads your name and email from your own Google Account page. Optionally, `GOOGLE_CLIENT_ID` enables Google's official popup (free, no secret). |
 | Platform connections | A real Chrome/Edge/Brave with its own OmniPost profile (`data/browser-profile`), controlled over the Chrome DevTools Protocol with `playwright-core`. Sessions are your normal cookies and stay on your machine. |
 | Unified feed | YouTube comes from yt-dlp's channel listing. Instagram comes from instagram.com's own web endpoints, called inside your logged-in tab. TikTok is read from your profile page. |
 | Posting | Drives the official web uploaders (YouTube Studio, Instagram "Create", TikTok Studio) step by step, the same way you would click through them. This is the approach used by projects like [social-auto-upload](https://github.com/dreammis/social-auto-upload). |
@@ -69,12 +91,14 @@ You can also install it globally with `npm link`, then use `omnipost <command>`.
 
 ## Configuration (all optional)
 
+Put these in a `.env` file in the project folder (see `.env.example`) or set them in your shell.
+
 | Env var | Purpose |
 | --- | --- |
 | `PORT` | Server port (default `5170`). |
 | `OMNIPOST_DATA` | Where the database, media and browser profile live (default `./data`). |
 | `BROWSER_PATH` | Path to a specific Chromium-based browser. |
-| `GOOGLE_CLIENT_ID` | Shows the official "Sign in with Google" button. Add `http://localhost:5170` as an authorized JavaScript origin. |
+| `GOOGLE_CLIENT_ID` | Enables Google's official sign-in popup. Add `http://localhost` and `http://localhost:5170` as authorized JavaScript origins. |
 | `YTDLP_PATH` / `FFMPEG_PATH` | Use your own binaries. |
 | `NO_OPEN=1` | Don't open the browser on start. |
 

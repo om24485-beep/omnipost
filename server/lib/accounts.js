@@ -9,12 +9,13 @@ import { platforms } from '../platforms/index.js';
  * Opens the platform's sign-in page in a visible browser window and waits until the session cookie appears.
  * Never types credentials: the user signs in themselves. Then reads the public profile of the signed-in account.
  */
-export async function runLoginFlow(def, { onStatus = () => {}, isCanceled = () => false, timeout = 10 * 60e3 } = {}) {
-  onStatus('Opening a secure sign-in window…');
-  const ctx = await acquire({ headed: true });
+export async function runLoginFlow(def, { onStatus = () => {}, isCanceled = () => false, timeout = 10 * 60e3, interactive = true } = {}) {
+  onStatus(interactive ? 'Opening a secure sign-in window…' : 'Checking your login…');
+  const ctx = await acquire({ headed: interactive });
   let loginPage = null;
   try {
     let cookies = await ctx.cookies();
+    if (!def.isLoggedIn(cookies) && !interactive) throw new Error(`You are not signed in to ${def.name} in this browser.`);
     if (!def.isLoggedIn(cookies)) {
       loginPage = await ctx.newPage();
       await loginPage.goto(def.loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
@@ -45,7 +46,7 @@ export async function runLoginFlow(def, { onStatus = () => {}, isCanceled = () =
 
 const publishAccounts = () => { db.save(); emit('accounts', db.data.accounts); };
 
-export function connectPlatform(pid, { silent = false } = {}) {
+export function connectPlatform(pid, { silent = false, interactive = true, onError } = {}) {
   const def = platforms[pid];
   const task = createTask('connect', { platform: pid, silent, status: 'waiting' });
   (async () => {
@@ -54,12 +55,14 @@ export function connectPlatform(pid, { silent = false } = {}) {
         onStatus: (message) => updateTask(task, { message }),
         isCanceled: () => task.canceled,
         timeout: silent ? 30000 : 10 * 60e3,
+        interactive,
       });
       db.data.accounts[pid] = { ...profile, platform: pid, connectedAt: Date.now(), needsReconnect: false };
       publishAccounts();
       updateTask(task, { status: 'done', message: 'Connected' });
       syncFeed(pid).catch(() => {});
     } catch (e) {
+      await onError?.().catch(() => {});
       updateTask(task, { status: 'error', error: e.message });
     }
   })();

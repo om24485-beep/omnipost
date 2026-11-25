@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, KeyRound, Layers, Repeat2, Send, ShieldCheck } from 'lucide-react';
 import { api } from '../api.js';
+import { browserCookies, useExtension } from '../extension.js';
 import { Button, PlatformBadge, Spinner } from '../ui.jsx';
 
 function GoogleG({ className = 'size-5' }) {
@@ -27,8 +28,35 @@ export default function Login({ info, onDone }) {
   const [error, setError] = useState('');
   const timer = useRef(null);
   const gisRef = useRef(null);
+  const ext = useExtension();
+  const extRef = useRef(ext);
+  extRef.current = ext;
 
   useEffect(() => () => clearInterval(timer.current), []);
+
+  // After signing in, quietly connect every platform this browser is already signed in to (Connector only).
+  const importLogins = (groups) => {
+    if (!extRef.current) return;
+    browserCookies(groups)
+      .then((cookies) => api('/api/accounts/import', { method: 'POST', body: { cookies } }))
+      .catch(() => {});
+  };
+
+  // Connector installed: use the Google account that is already signed in to this browser.
+  async function startWithExtension() {
+    setError('');
+    setWaiting(true);
+    setMessage('Using the Google account signed in to this browser…');
+    try {
+      const cookies = await browserCookies(['google']);
+      await api('/api/auth/extension', { method: 'POST', body: { cookies } });
+      importLogins(['instagram', 'tiktok']);
+      onDone();
+    } catch (e) {
+      setError(e.message);
+      setWaiting(false);
+    }
+  }
 
   // Optional official Google button when a (free) client id is configured.
   useEffect(() => {
@@ -40,10 +68,18 @@ export default function Login({ info, onDone }) {
       window.google.accounts.id.initialize({
         client_id: info.googleClientId,
         callback: async ({ credential }) => {
-          try { await api('/api/auth/google/idtoken', { method: 'POST', body: { credential } }); onDone(); } catch (e) { setError(e.message); }
+          try {
+            await api('/api/auth/google/idtoken', { method: 'POST', body: { credential } });
+            importLogins(['google', 'instagram', 'tiktok']);
+            onDone();
+          } catch (e) { setError(e.message); }
         },
+        use_fedcm_for_prompt: true,
+        context: 'signin',
       });
-      window.google.accounts.id.renderButton(gisRef.current, { theme: 'filled_black', size: 'large', shape: 'pill', width: 320 });
+      window.google.accounts.id.renderButton(gisRef.current, { theme: 'filled_black', size: 'large', shape: 'pill', text: 'continue_with', width: 320 });
+      // Google's own popup, pre-filled with the account already signed in to this browser.
+      window.google.accounts.id.prompt();
     };
     document.head.appendChild(s);
     return () => s.remove();
@@ -110,21 +146,28 @@ export default function Login({ info, onDone }) {
           </p>
 
           <div className="mt-8 space-y-3">
+            {info.googleClientId && <div ref={gisRef} className="flex min-h-11 justify-center" />}
+            {(ext || !info.googleClientId) && (
             <button
-              onClick={start}
+              onClick={ext ? startWithExtension : start}
               disabled={waiting || !info.browserFound}
               className="flex h-13 w-full cursor-pointer items-center justify-center gap-3 rounded-full bg-white py-3.5 text-[15px] font-semibold text-zinc-900 shadow-lg transition hover:bg-zinc-100 active:scale-[0.99] disabled:cursor-default disabled:opacity-70"
             >
               {waiting ? <Spinner className="size-5" /> : <GoogleG />}
-              {waiting ? 'Waiting for Google…' : 'Continue with Google'}
+              {waiting ? 'Waiting for Google…' : ext ? 'Continue as the Google account in this browser' : 'Continue with Google'}
             </button>
-            {info.googleClientId && <div ref={gisRef} className="flex justify-center" />}
+            )}
+            {info.googleClientId && !ext && !waiting && (
+              <button onClick={start} disabled={!info.browserFound} className="block w-full cursor-pointer text-center text-xs text-zinc-500 hover:text-zinc-300">
+                Popup not showing? Sign in through the OmniPost window instead
+              </button>
+            )}
           </div>
 
           {waiting && (
             <div className="pop mt-5 rounded-2xl border border-sky-400/20 bg-sky-400/[0.06] p-4 text-sm text-sky-100">
               <div className="font-medium">{message}</div>
-              <div className="mt-1 text-sky-200/70">A normal Chrome/Edge window opened. Sign in there — OmniPost never sees your password.</div>
+              {!ext && <div className="mt-1 text-sky-200/70">A normal Chrome/Edge window opened. Sign in there — OmniPost never sees your password.</div>}
               <Button variant="ghost" size="sm" className="mt-2 -ml-2" onClick={() => { clearInterval(timer.current); setWaiting(false); }}>Cancel</Button>
             </div>
           )}
@@ -137,6 +180,12 @@ export default function Login({ info, onDone }) {
             <div className="mt-5 rounded-2xl border border-amber-500/25 bg-amber-500/[0.07] p-4 text-sm text-amber-200">
               OmniPost needs Google Chrome, Microsoft Edge or Brave installed. Install one and reload this page.
             </div>
+          )}
+
+          {ext === null && !info.googleClientId && (
+            <p className="mt-4 text-xs text-zinc-500">
+              Tip: install the OmniPost Connector extension (in the <code className="text-zinc-400">extension</code> folder) to sign in with the Google account already in this browser.
+            </p>
           )}
 
           <div className="mt-8 flex items-start gap-2.5 border-t border-white/[0.07] pt-6 text-xs text-zinc-500">
